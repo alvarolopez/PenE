@@ -500,7 +500,7 @@ class PenE(object):
         logging.info("CONFIGURATION snapshot:\n%s" % t)
 
 
-def set_log():
+def setup_logging():
     # -- LOG -- #
     ## file
     logging.basicConfig(level=logging.DEBUG,
@@ -519,156 +519,153 @@ def set_log():
     logging.getLogger('').addHandler(console)
 
 
-# -- penE -- #
-penE = PenE(CONF["server"], CONF["control_port"])
-set_log()
+def setup_parser():
+    parser = argparse.ArgumentParser(description='penE(xecution of commands)')
+    parser.add_argument(
+        "-c",
+        "--control-port",
+        type=int,
+        dest="CONF['control_port']",
+        default=CONF["control_port"],
+        help="Set PEN control port")
+    parser.add_argument(
+        "-p",
+        "--protocol-port",
+        type=int,
+        dest="CONF['protocol_port']",
+        default=CONF["protocol_port"],
+        help="Set protocol's port being load-balanced by PEN.")
+
+    subparsers = parser.add_subparsers()
+
+    #- Host management commands -#
+    ## validate
+    parser_host_validate = subparsers.add_parser(
+        "validate",
+        help="Validate host.")
+    parser_host_validate.add_argument(
+        "host_ip",
+        metavar="IPADDRESS")
+    parser_host_validate.set_defaults(func=penE.validate, validate=True)
+
+    ## invalidate
+    parser_host_invalidate = subparsers.add_parser(
+        "invalidate",
+        help="Invalidate host.")
+    parser_host_invalidate.add_argument(
+        "host_ip",
+        metavar="IPADDRESS")
+    parser_host_invalidate.set_defaults(func=penE.validate, validate=False)
+
+    ## reset
+    parser_reset = subparsers.add_parser(
+        "reset",
+        help="Resets states from managed hosts.")
+    parser_reset.add_argument(
+        "host_ip",
+        metavar="IPADDRESS")
+    #parser_reset.add_argument(
+    #    "--all",
+    #    action="store_true")
+    parser_reset.set_defaults(func=penE.reset)
+
+    ## cluster
+    parser_cluster = subparsers.add_parser(
+        "cluster",
+        help="Show cluster status.")
+    parser_cluster.set_defaults(func=penE.cluster)
+
+    ## track
+    parser_track = subparsers.add_parser(
+        "track",
+        help="Track the given node in the DB.")
+    parser_track.add_argument(
+        "host_ip",
+        metavar="IPADDRESS")
+    parser_track.set_defaults(func=penE.track)
+
+    ## untrack
+    parser_untrack = subparsers.add_parser(
+        "untrack",
+        help="Untrack the given node in the DB.")
+    parser_untrack.add_argument(
+        "host_ip",
+        metavar="IPADDRESS")
+    parser_untrack.set_defaults(func=penE.untrack)
+
+    #- Configuration commands -#
+    ## showconfig
+    parser_config_show = subparsers.add_parser("showconfig")
+    parser_config_show.set_defaults(func=penE.show_config)
 
 
-# -- PARSER -- #
-parser = argparse.ArgumentParser(description='penE(xecution of commands)')
-parser.add_argument(
-    "-c",
-    "--control-port",
-    type=int,
-    dest="CONF['control_port']",
-    default=CONF["control_port"],
-    help="Set PEN control port")
-parser.add_argument(
-    "-p",
-    "--protocol-port",
-    type=int,
-    dest="CONF['protocol_port']",
-    default=CONF["protocol_port"],
-    help="Set protocol's port being load-balanced by PEN.")
+    #- PEN-related commands -#
+    ## add node
+    parser_pen_add = subparsers.add_parser("add")
+    parser_pen_add.add_argument(
+        "host_ip",
+        action="store",
+        metavar="IPADDRESS")
+    parser_pen_add.set_defaults(func=penE.add_host)
 
-subparsers = parser.add_subparsers()
-
-#- Host management commands -#
-## validate
-parser_host_validate = subparsers.add_parser(
-    "validate",
-    help="Validate host.")
-parser_host_validate.add_argument(
-    "host_ip",
-    metavar="IPADDRESS")
-parser_host_validate.set_defaults(func=penE.validate, validate=True)
-
-## invalidate
-parser_host_invalidate = subparsers.add_parser(
-    "invalidate",
-    help="Invalidate host.")
-parser_host_invalidate.add_argument(
-    "host_ip",
-    metavar="IPADDRESS")
-parser_host_invalidate.set_defaults(func=penE.validate, validate=False)
-
-## reset
-parser_reset = subparsers.add_parser(
-    "reset",
-    help="Resets states from managed hosts.")
-parser_reset.add_argument(
-    "host_ip",
-    metavar="IPADDRESS")
-#parser_reset.add_argument(
-#    "--all",
-#    action="store_true")
-parser_reset.set_defaults(func=penE.reset)
-
-## cluster
-parser_cluster = subparsers.add_parser(
-    "cluster",
-    help="Show cluster status.")
-parser_cluster.set_defaults(func=penE.cluster)
-
-## track
-parser_track = subparsers.add_parser(
-    "track",
-    help="Track the given node in the DB.")
-parser_track.add_argument(
-    "host_ip",
-    metavar="IPADDRESS")
-parser_track.set_defaults(func=penE.track)
-
-## untrack
-parser_untrack = subparsers.add_parser(
-    "untrack",
-    help="Untrack the given node in the DB.")
-parser_untrack.add_argument(
-    "host_ip",
-    metavar="IPADDRESS")
-parser_untrack.set_defaults(func=penE.untrack)
-
-#- Configuration commands -#
-## showconfig
-parser_config_show = subparsers.add_parser("showconfig")
-parser_config_show.set_defaults(func=penE.show_config)
+    ## delete node
+    parser_pen_del = subparsers.add_parser("del")
+    parser_pen_del.add_argument(
+        "host_ip",
+        action="store",
+        metavar="IPADDRESS")
+    parser_pen_del.set_defaults(func=penE.del_host)
+    ## list
+    parser_pen_list = subparsers.add_parser("list")
+    parser_pen_list.set_defaults(func=penE.cluster)
 
 
-#- PEN-related commands -#
-## add node
-parser_pen_add = subparsers.add_parser("add")
-parser_pen_add.add_argument(
-    "host_ip",
-    action="store",
-    metavar="IPADDRESS")
-parser_pen_add.set_defaults(func=penE.add_host)
-
-## delete node
-parser_pen_del = subparsers.add_parser("del")
-parser_pen_del.add_argument(
-    "host_ip",
-    action="store",
-    metavar="IPADDRESS")
-parser_pen_del.set_defaults(func=penE.del_host)
-## list
-parser_pen_list = subparsers.add_parser("list")
-parser_pen_list.set_defaults(func=penE.cluster)
-
-
-#- (Zabbix) Triggers commands -#
-parser_trigger = subparsers.add_parser('trigger')
-parser_trigger_subparsers = parser_trigger.add_subparsers()
-## trigger add
-parser_trigger_add = parser_trigger_subparsers.add_parser(
-    "add",
-    help=("Enqueues a Zabbix trigger record to a given PEN-managed host."
-          "Disables the host in PEN cluster."))
-parser_trigger_add.add_argument(
-    "host_ip",
-    action="store",
-    metavar="IPADDRESS")
-parser_trigger_add.add_argument(
-    "trigger",
-    action="store",
-    metavar="TRIGGER")
-parser_trigger_add.set_defaults(func=penE.add_trigger)
-## trigger del
-parser_trigger_del = parser_trigger_subparsers.add_parser(
-    "del",
-    help=("Dequeues a Zabbix trigger record from a given PEN-managed host."
-          " Decides whether or not to disable the host from PEN cluster."))
-parser_trigger_del.add_argument(
-    "host_ip",
-    action="store",
-    metavar="IPADDRESS")
-parser_trigger_del.add_argument(
-    "trigger",
-    action="store",
-    metavar="TRIGGER")
-parser_trigger_del.set_defaults(func=penE.del_trigger)
+    #- (Zabbix) Triggers commands -#
+    parser_trigger = subparsers.add_parser('trigger')
+    parser_trigger_subparsers = parser_trigger.add_subparsers()
+    ## trigger add
+    parser_trigger_add = parser_trigger_subparsers.add_parser(
+        "add",
+        help=("Enqueues a Zabbix trigger record to a given PEN-managed host."
+            "Disables the host in PEN cluster."))
+    parser_trigger_add.add_argument(
+        "host_ip",
+        action="store",
+        metavar="IPADDRESS")
+    parser_trigger_add.add_argument(
+        "trigger",
+        action="store",
+        metavar="TRIGGER")
+    parser_trigger_add.set_defaults(func=penE.add_trigger)
+    ## trigger del
+    parser_trigger_del = parser_trigger_subparsers.add_parser(
+        "del",
+        help=("Dequeues a Zabbix trigger record from a given PEN-managed host."
+            " Decides whether or not to disable the host from PEN cluster."))
+    parser_trigger_del.add_argument(
+        "host_ip",
+        action="store",
+        metavar="IPADDRESS")
+    parser_trigger_del.add_argument(
+        "trigger",
+        action="store",
+        metavar="TRIGGER")
+    parser_trigger_del.set_defaults(func=penE.del_trigger)
 
 
-#- DB commands -#
-parser_db = subparsers.add_parser('db')
-parser_db_subparsers = parser_db.add_subparsers()
-## db show
-parser_db_show = parser_db_subparsers.add_parser(
-    "show",
-    help="Show DB content.")
-parser_db_show.set_defaults(func=penE.show_db)
+    #- DB commands -#
+    parser_db = subparsers.add_parser('db')
+    parser_db_subparsers = parser_db.add_subparsers()
+    ## db show
+    parser_db_show = parser_db_subparsers.add_parser(
+        "show",
+        help="Show DB content.")
+    parser_db_show.set_defaults(func=penE.show_db)
+    return parser
 
-
-args = parser.parse_args()
-
-# -- Main call -- #
-args.func(args)
+if __name__ == "__main__":
+    penE = PenE(CONF["server"], CONF["control_port"])
+    setup_logging()
+    parser = setup_parser()
+    args = parser.parse_args()
+    args.func(args)
