@@ -520,7 +520,7 @@ def set_log():
 
 
 # -- penE -- #
-penE = PenE()
+penE = PenE(CONF["server"], CONF["control_port"])
 set_log()
 
 
