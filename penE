@@ -1,0 +1,682 @@
+#!/usr/bin/env python
+
+import argparse
+import commands
+import json
+import logging
+import prettytable
+import re
+import sys
+import yaml
+
+from functools import wraps
+
+CONF = {
+    "db_filename": "/var/tmp/penE.yaml",
+    "log_filename": "/var/tmp/penE.log",
+    "server": "127.0.0.1",
+    "control_port": "10023",
+    "protocol_port": "22",
+}
+
+
+# ------------------- #
+# -- DB management -- #
+# ------------------- #
+
+class DB():
+    def __init__(self):
+        try:
+            self.d = yaml.load(open(CONF["db_filename"], "r"))
+        except IOError:
+            logging.debug("DB file '%s' does not exist. No data being loaded."
+                    % CONF["db_filename"])
+            self.d = {}
+        except yaml.scanner.ScannerError:
+            logging.error("Malformed YAML DB file '%s'" % CONF["db_filename"])
+            sys.exit(-1)
+
+    def commit(func):
+        @wraps(func)
+        def _commit(self, *args, **kw):
+            output = func(self, *args, **kw)
+            yaml.dump(self.d, open(CONF["db_filename"], 'w'))
+            return output
+        return _commit
+
+    def _validate_ip(self, ip):
+        """
+        Assures good IP syntax.
+        """
+        valid_ipaddress = ("^((\d|\d\d|1\d{2}|2[0-4]\d|25[0-5])\.){3}"
+                           "(\d|[1-9]\d|1\d{2}|2[0-4]\d|25[0-5])$")
+
+        if re.match(valid_ipaddress, ip):
+            logging.debug("IP address '%s' successfully validated." % ip)
+            return True
+        else:
+            logging.error("Bad IP address '%s' received." % ip)
+            return False
+
+    @commit
+    def _initialize(self, host):
+        """
+        Sets the host to the initial state.
+        """
+        self.d[host] = { "validated": True, "triggers": [] }
+    
+    @commit
+    def _purge(self, host):
+        """
+        Purges the host from the DB.
+        """
+        self.d.pop(host)
+
+    def show(self):
+        """
+        Shows DB content.
+        """
+        # get columns
+        cols = [ "addr", "validated", "triggers" ]
+        t = prettytable.PrettyTable(cols)
+        t.align["addr"] = "l"
+        t.padding_with = 1
+        t.sortby = "addr"
+        logging.debug("Columns gathered: %s" % cols)
+        # get rows
+        for k,v in self.d.iteritems():
+            row = [k] + v.values()
+            logging.debug("Adding row: %s" % row)
+            t.add_row(row)
+        logging.info("DB snapshot:\n%s" % t)
+    
+    @commit
+    def reset(self, args):
+        """
+        Resets (per-host, all) DB content. Returns a list with the host/s being
+        removed.
+        """
+        reset_hosts = []
+
+        if args.all:
+            msg = "ALL the nodes"
+        else:
+            msg = "host '%s'" % args.host_ip
+
+        answer = ''
+        while answer not in ['y', 'n']:
+            answer = raw_input(("WARNING: This action will reset the state of %s"
+                                " in the DB.\n\tDo you want to continue? (y/n) " %
+                                msg))
+        if answer == 'y':
+            try:
+                if self._validate_ip(args.host_ip):
+                    self._initialize(args.host_ip)
+                    reset_hosts = [args.host_ip]
+                    logging.info("Reseting data for host '%s'." % args.host_ip)
+            except TypeError:
+                existent_hosts = self.d.keys()
+                for h in existent_hosts:
+                    self._initialize(args.host_ip)
+                    reset_hosts.append(h)
+                    logging.debug("Reseting DB data for host '%s'" % h)
+                reset = True
+                logging.info("Hosts have been successfully reset: %s" 
+                             % reset_hosts)
+
+        return reset_hosts
+
+    @commit
+    def register(self, host):
+        try:
+            self.d[host]
+            logging.debug("Host '%s' already registered." % host)
+
+        except KeyError:
+            logging.info("Adding '%s' to DB." % host)
+            self._initialize(host)
+
+    @commit
+    def unregister(self, host):
+        try:
+            self.d[host]
+            logging.debug("Unregistering host '%s'." % host)
+            self._purge(host)
+        except KeyError:
+            logging.debug("Host '%s' not already registered." % host)
+
+    @commit
+    def validate(self, host):
+        """
+        Marks the host as validated.
+        """
+        self.d[host]["validated"] = True
+
+    @commit
+    def invalidate(self, host):
+        """
+        Marks the host as invalidated.
+        """
+        self.d[host]["validated"] = False
+    
+    def is_validated(self, host):
+        """
+        Returns True/False if the host is validated/not validated.
+        """
+        try:
+            validated = self.d[host]["validated"]
+        except KeyError:
+            validated = True
+        return validated
+
+    @commit
+    def add_trigger(self, args):
+        """
+        Returns True/False if trigger has been inserted/not inserted
+        """
+        append = False
+
+        self.register(args.host_ip)
+
+        if not args.trigger in self.get_trigger(args.host_ip):
+            append = True
+        else:
+            logging.debug(("Trigger '%s' already registered for host '%s'. Not"
+                           " adding." % (args.trigger, args.host_ip)))
+
+        if append:
+            try:
+                self.d[args.host_ip]["triggers"]
+            except KeyError:
+                self._initialize(args.host_ip)
+            
+            self.d[args.host_ip]["triggers"].append(args.trigger)
+            logging.info("Trigger '%s' appended to host '%s' records." %
+                          (args.trigger, args.host_ip))
+        return append
+
+    @commit
+    def del_trigger(self, args):
+        """
+        Returns True/False if trigger has been removed/not removed.
+        """
+        remove = False
+        
+        try:
+            self.d[args.host_ip]["triggers"].remove(args.trigger)
+            logging.info("Trigger '%s' deleted from host '%s' records." %
+                          (args.trigger, args.host_ip))
+            remove = True
+        except KeyError:
+            logging.error("Host '%s' not already tracked." % args.host_ip)
+        except ValueError:
+            logging.error("Trigger '%s' not found for host '%s'." %
+                           (args.trigger, args.host_ip))
+
+        if remove:
+            logging.debug("Remaining triggers for host '%s': %s." %
+                           (args.host_ip, self.d[args.host_ip]["triggers"]))
+        return remove
+
+    def get_trigger(self, host):
+        """
+        Returns trigger list.
+        """
+        try:
+            triggers = self.d[host]["triggers"]
+        except KeyError:
+            triggers = []
+
+        return triggers
+
+
+
+# -------------------- #
+# -- PEN management -- #
+# -------------------- #
+
+class PENCommandExecException(Exception):
+    pass
+
+class PEN():
+    def _exec_cmd(self, cmd):
+        """
+        Executes the penctl command received.
+            - Returns False if there was an error while executing the 
+              command, the output result otherwise.
+        """
+        status, output = commands.getstatusoutput(cmd)
+        if status != 0:
+            logging.debug("Error executing command: %s\n(%s, %s)" % 
+                           (cmd, status, output))
+            raise PENCommandExecException
+        else:
+            return output
+
+    def _get_id(self, host):
+        """
+        Returns all the IDs that match the given host IP.
+        """
+        cmd = "penctl %s:%s servers" % (CONF["server"], CONF["control_port"])
+        try:
+            output = self._exec_cmd(cmd).split('\n')
+            ids = [line.split()[0] for line in output
+                   if re.match("^%s$" % host, line.split()[2].strip())]
+            logging.debug("Matching IDs for IP '%s': %s." % (host, ids))
+        except PENCommandExecException:
+            ids = []
+        
+        return ids
+
+    def _get_next_id(self):
+        """
+        Returns the next ID available in the cluster (for adding purposes).
+        """
+        cmd = "penctl %s:%s servers" % (CONF["server"], CONF["control_port"])
+        try:
+            output = self._exec_cmd(cmd).split('\n')
+            next_id = None
+            for line in output:
+                if re.match("^0.0.0.0$", line.split()[2].strip()):
+                    next_id = line.split()[0]
+                    break
+            logging.debug("Next ID available in PEN cluster: %s." % next_id)
+        except PENCommandExecException:
+            next_id = None
+        
+        return next_id
+
+    def add_host(self, host, validated_check=True):
+        """
+        Adds the given host to PEN cluster.
+            - 'host'           : IP address of the host to be deleted.
+            - 'validated_check': Whether or not to consider if the host is 
+                                 validated/not validated..
+        """
+        logging.debug("Adding host '%s' in PEN cluster." % host)
+        logging.debug("Using PEN control port: %s." % CONF["control_port"])
+        
+        append = False
+
+        ids = self._get_id(host)
+        if ids:
+            logging.info(("Node '%s' is already appended to PEN cluster"
+                          "(id/s %s). Not adding." % (host, ids)))
+        else:
+            id_no = self._get_next_id()
+            if id_no == None:
+                logging.error(("Did not receive a valid ID for adding host '%s'"
+                               " to PEN cluster" % host))
+            else:
+                try:
+                    cmd = ("penctl %s:%s server %s address %s port %s max 0" 
+                            % (CONF["server"] ,CONF["control_port"], id_no, host,
+                               CONF["protocol_port"]))
+                    self._exec_cmd(cmd)
+                    append = True
+                    logging.info("Node '%s' added to PEN cluster with ID %s" 
+                                  % (host, id_no))
+                except PENCommandExecException:
+                    logging.error(("Could not add host '%s' in PEN"
+                                   " cluster. Check the log for further" 
+                                   " details." % host))
+
+        return append
+
+    def del_host(self, host):
+        """
+        Deletes all the matched entries found for the given host in PEN cluster.
+            - 'host': IP address of the host to be deleted.
+        """
+        logging.debug("Removing host '%s' from PEN cluster." % host)
+        logging.debug("Using PEN control port: %s." % CONF["control_port"])
+
+        remove = False
+        
+        ids = self._get_id(host)
+        if not ids:
+            logging.info("Node '%s' does not already belong to PEN cluster. Not deleting." %
+                         host)
+        else:
+            for id_no in ids:
+                try:
+                    cmd = ("penctl %s:%s server %s address 0.0.0.0 port" 
+                           "0 max 0" % (CONF["server"], CONF["control_port"], id_no))
+                    self._exec_cmd(cmd)
+                    logging.info("Host '%s' has been removed from PEN cluster"
+                                 " (id: %s)." % (host, id_no))
+                    remove = True
+                except PENCommandExecException:
+                    logging.error(("Could not delete host '%s' from PEN" 
+                                   " cluster. Check the log for further" 
+                                   " details." % host))
+
+        return remove
+
+    def list(self):
+        logging.debug("Listing hosts in PEN cluster.")
+        logging.debug("Using PEN control port: %s." % CONF["control_port"])
+
+        cmd = "penctl %s:%s servers" % (CONF["server"], CONF["control_port"])
+        status, output = commands.getstatusoutput(cmd)
+        if status != 0:
+            logging.error(("Could not list hosts enabled in PEN cluster (err_no:"
+                          " %s)." % status))
+        else:
+            server_lines = [ line for line in output.split('\n') if line.split()[2] != "0.0.0.0" ]
+            try:
+                # get columns
+                cols = server_lines[0].split()[1:]
+                cols = [cols[x] for x in xrange(0, len(cols), 2)]
+                cols.insert(0, "id")
+                t = prettytable.PrettyTable(cols)
+                t.align["addr"] = "l"
+                t.sortby = "addr"
+                t.padding_with = 1
+                logging.debug("Columns gathered: %s" % cols)
+                # get rows
+                for server_line in server_lines:
+                    id_no, data = server_line.split(' ', 1)
+                    row = data.split()
+                    row = [row[x+1] for x in xrange(0, len(row), 2)]
+                    row.insert(0, id_no)
+                    logging.debug("Adding row: %s" % row)
+                    t.add_row(row)
+                logging.info("PEN cluster snapshot:\n%s" % t)
+            except IndexError:
+                logging.info("There are no hosts currently in PEN cluster.")
+
+
+
+# --------------------- #
+# -- PENe main class -- #
+# --------------------- #
+
+class PenE():
+    def __init__(self):
+        self.db = DB()
+        self.pen = PEN()
+
+    def validate(self, args):
+        """
+        Decides whether to validate or invalidate the given host.
+        """
+        self.db.register(args.host_ip)
+        
+        if args.validate:
+            self.db.validate(args.host_ip)
+            logging.info("Node '%s' has been validated by the admin" 
+                          % args.host_ip)
+            
+            triggers = self.db.get_trigger(args.host_ip)
+            if triggers:
+                logging.info(("Host '%s' cannot be added to cluster. Active"
+                              " triggers: %s." % (args.host_ip, triggers)))
+            else:
+                logging.debug(("Host '%s' has no triggers assigned. Host can"
+                               " be added." % args.host_ip))
+                self.pen.add_host(args.host_ip, validated_check=False)
+        else:
+            self.db.invalidate(args.host_ip)
+            self.pen.del_host(args.host_ip)
+            logging.info(("Node '%s' invalidated by the admin (note: won't be"
+                          " auto-added to the cluster until re-enabled by the"
+                          " admin)." % args.host_ip))
+
+    def show_db(self, args):
+        """
+        Lists DB content.
+        """
+        self.db.show()
+
+    def reset(self, args):
+        """
+        Resets DB content.
+        """
+        for h in self.db.reset(args):
+            self.pen.add_host(h)
+   
+    def track(self, args):
+        """
+        Tracks the given node if it is not already added to the DB.
+        """
+        self.db.register(args.host_ip)
+    
+    def untrack(self, args):
+        """
+        Untracks the given node if already added to the DB.
+        """
+        self.db.unregister(args.host_ip)
+
+    def add_trigger(self, args):
+        """
+        Appends the given trigger to DB.
+        """
+        if self.db.add_trigger(args):
+            self.pen.del_host(args.host_ip)
+
+    def del_trigger(self, args):
+        """
+        Removes the given trigger from DB.
+        """
+        self.db.del_trigger(args)
+        if self.db.is_validated(args.host_ip):
+            self.pen.add_host(args.host_ip)
+            logging.debug("Host '%s' is validated. Appending to the cluster.")
+        else:
+            logging.info(("Host '%s' is invalidated. Cannot be added to the"
+                           " cluster." % args.host_ip))
+
+    def add_host(self, args, validated_check=True):
+        """
+        Adds the given host to the cluster.
+        """
+        if self.db.is_validated(args.host_ip) or not validated_check:
+            triggers = self.db.get_trigger(args.host_ip)
+            if triggers:
+                logging.info(("Host '%s' cannot be added to cluster. Active"
+                              " triggers: %s." % (args.host_ip, triggers)))
+            else:
+                logging.debug(("Host '%s' has no triggers assigned. Host can"
+                               "be added." % args.host_ip))
+                self.pen.add_host(args.host_ip)
+                self.db.register(args.host_ip)
+
+    def del_host(self, args):
+        """
+        Deletes the given host from the cluster.
+        """
+        if self.pen.del_host(args.host_ip):
+            if self.db.is_validated(args.host_ip):
+                logging.info(("Host '%s' is in a valid status (within DB). Note"
+                              " that it is likely to be auto-added to PEN" 
+                              " cluster. Trigger an invalidation to delete it"
+                              " permanently." % args.host_ip))
+    
+    def cluster(self, args):
+        """
+        Cluster status.
+        """
+        self.pen.list()
+
+    def show_config(self, args):
+        t = prettytable.PrettyTable(["", ""])
+        for k,v in CONF.iteritems():
+            t.add_row([k,v])
+        logging.info("CONFIGURATION snapshot:\n%s" % t)
+
+
+
+# ---------- #
+# -- MAIN -- #
+# ---------- #
+
+def set_log():
+    # -- LOG -- #
+    ## file
+    logging.basicConfig(level=logging.DEBUG,
+                        #format='%(asctime)s %(name) %(levelname)-8s %(message)s',
+                        format="%(asctime)-12s %(levelname)-8s %(filename)s:%(lineno)d (%(funcName)s) - %(message)s",
+                        datefmt='%m-%d %H:%M',
+                        filename=CONF["log_filename"],
+                        filemode='a')
+    ## console
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(message)s')
+    console.setFormatter(formatter)
+    logging.getLogger('').addHandler(console)
+
+
+# -- penE -- #
+penE = PenE()
+set_log()
+
+
+# -- PARSER -- #
+parser = argparse.ArgumentParser(description='penE(xecution of commands)')
+parser.add_argument(
+    "-c",
+    "--control-port",
+    type=int,
+    dest="CONF['control_port']",
+    default=CONF["control_port"],
+    help="Set PEN control port")
+parser.add_argument(
+    "-p",
+    "--protocol-port",
+    type=int,
+    dest="CONF['protocol_port']",
+    default=CONF["protocol_port"],
+    help="Set protocol's port being load-balanced by PEN.")
+
+subparsers = parser.add_subparsers()
+
+#- Host management commands -#
+## validate
+parser_host_validate = subparsers.add_parser(
+    "validate",
+    help="Validate host.")
+parser_host_validate.add_argument(
+    "host_ip",
+    metavar="IPADDRESS")
+parser_host_validate.set_defaults(func=penE.validate, validate=True)
+
+## invalidate
+parser_host_invalidate = subparsers.add_parser(
+    "invalidate",
+    help="Invalidate host.")
+parser_host_invalidate.add_argument(
+    "host_ip",
+    metavar="IPADDRESS")
+parser_host_invalidate.set_defaults(func=penE.validate, validate=False)
+
+## reset
+parser_reset = subparsers.add_parser(
+    "reset",
+    help="Resets states from managed hosts.")
+parser_reset.add_argument(
+    "host_ip",
+    metavar="IPADDRESS")
+#parser_reset.add_argument(
+#    "--all",
+#    action="store_true")
+parser_reset.set_defaults(func=penE.reset)
+
+## cluster
+parser_cluster = subparsers.add_parser(
+    "cluster",
+    help="Show cluster status.")
+parser_cluster.set_defaults(func=penE.cluster)
+
+## track
+parser_track = subparsers.add_parser(
+    "track",
+    help="Track the given node in the DB.")
+parser_track.add_argument(
+    "host_ip",
+    metavar="IPADDRESS")
+parser_track.set_defaults(func=penE.track)
+
+## untrack
+parser_untrack = subparsers.add_parser(
+    "untrack",
+    help="Untrack the given node in the DB.")
+parser_untrack.add_argument(
+    "host_ip",
+    metavar="IPADDRESS")
+parser_untrack.set_defaults(func=penE.untrack)
+
+#- Configuration commands -#
+## showconfig
+parser_config_show = subparsers.add_parser("showconfig")
+parser_config_show.set_defaults(func=penE.show_config)
+
+
+#- PEN-related commands -#
+## add node
+parser_pen_add = subparsers.add_parser("add")
+parser_pen_add.add_argument("host_ip",
+    action="store",
+    metavar="IPADDRESS")
+parser_pen_add.set_defaults(func=penE.add_host)
+
+## delete node
+parser_pen_del = subparsers.add_parser("del")
+parser_pen_del.add_argument(
+    "host_ip",
+    action="store",
+    metavar="IPADDRESS")
+parser_pen_del.set_defaults(func=penE.del_host)
+## list
+parser_pen_list = subparsers.add_parser("list")
+parser_pen_list.set_defaults(func=penE.cluster)
+
+
+#- (Zabbix) Triggers commands -#
+parser_trigger = subparsers.add_parser('trigger')
+parser_trigger_subparsers = parser_trigger.add_subparsers()
+## trigger add
+parser_trigger_add = parser_trigger_subparsers.add_parser(
+    "add",
+    help=("Enqueues a Zabbix trigger record to a given PEN-managed host."
+          "Disables the host in PEN cluster."))
+parser_trigger_add.add_argument(
+    "host_ip",
+    action="store",
+    metavar="IPADDRESS")
+parser_trigger_add.add_argument(
+    "trigger",
+    action="store",
+    metavar="TRIGGER")
+parser_trigger_add.set_defaults(func=penE.add_trigger)
+## trigger del
+parser_trigger_del = parser_trigger_subparsers.add_parser(
+    "del",
+    help=("Dequeues a Zabbix trigger record from a given PEN-managed host."
+          " Decides whether or not to disable the host from PEN cluster."))
+parser_trigger_del.add_argument(
+    "host_ip",
+    action="store",
+    metavar="IPADDRESS")
+parser_trigger_del.add_argument(
+    "trigger",
+    action="store",
+    metavar="TRIGGER")
+parser_trigger_del.set_defaults(func=penE.del_trigger)
+
+
+#- DB commands -#
+parser_db = subparsers.add_parser('db')
+parser_db_subparsers = parser_db.add_subparsers()
+## db show
+parser_db_show = parser_db_subparsers.add_parser(
+    "show",
+    help="Show DB content.")
+parser_db_show.set_defaults(func=penE.show_db)
+
+
+args = parser.parse_args()
+
+# -- Main call -- #
+args.func(args)
