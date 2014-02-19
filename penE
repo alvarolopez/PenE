@@ -19,7 +19,7 @@ CONF = {
 }
 
 
-class DB():
+class DB(object):
     def __init__(self):
         try:
             self.d = yaml.load(open(CONF["db_filename"], "r"))
@@ -228,7 +228,7 @@ class PENCommandExecException(Exception):
     pass
 
 
-class PEN():
+class PEN(object):
     def _exec_cmd(self, cmd):
         """
         Executes the penctl command received.
@@ -379,7 +379,7 @@ class PEN():
                 logging.info("There are no hosts currently in PEN cluster.")
 
 
-class PenE():
+class PenE(object):
     def __init__(self):
         self.db = DB()
         self.pen = PEN()
