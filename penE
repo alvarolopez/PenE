@@ -20,17 +20,13 @@ CONF = {
 }
 
 
-# ------------------- #
-# -- DB management -- #
-# ------------------- #
-
 class DB():
     def __init__(self):
         try:
             self.d = yaml.load(open(CONF["db_filename"], "r"))
         except IOError:
             logging.debug("DB file '%s' does not exist. No data being loaded."
-                    % CONF["db_filename"])
+                          % CONF["db_filename"])
             self.d = {}
         except yaml.scanner.ScannerError:
             logging.error("Malformed YAML DB file '%s'" % CONF["db_filename"])
@@ -63,8 +59,8 @@ class DB():
         """
         Sets the host to the initial state.
         """
-        self.d[host] = { "validated": True, "triggers": [] }
-    
+        self.d[host] = {"validated": True, "triggers": []}
+
     @commit
     def _purge(self, host):
         """
@@ -77,19 +73,19 @@ class DB():
         Shows DB content.
         """
         # get columns
-        cols = [ "addr", "validated", "triggers" ]
+        cols = ["addr", "validated", "triggers"]
         t = prettytable.PrettyTable(cols)
         t.align["addr"] = "l"
         t.padding_with = 1
         t.sortby = "addr"
         logging.debug("Columns gathered: %s" % cols)
         # get rows
-        for k,v in self.d.iteritems():
+        for k, v in self.d.iteritems():
             row = [k] + v.values()
             logging.debug("Adding row: %s" % row)
             t.add_row(row)
         logging.info("DB snapshot:\n%s" % t)
-    
+
     @commit
     def reset(self, args):
         """
@@ -105,9 +101,9 @@ class DB():
 
         answer = ''
         while answer not in ['y', 'n']:
-            answer = raw_input(("WARNING: This action will reset the state of %s"
-                                " in the DB.\n\tDo you want to continue? (y/n) " %
-                                msg))
+            answer = raw_input("WARNING: This action will reset the state of "
+                               "%s in the DB.\n\tDo you want to continue? "
+                               "(y/n) " % msg)
         if answer == 'y':
             try:
                 if self._validate_ip(args.host_ip):
@@ -121,7 +117,7 @@ class DB():
                     reset_hosts.append(h)
                     logging.debug("Reseting DB data for host '%s'" % h)
                 reset = True
-                logging.info("Hosts have been successfully reset: %s" 
+                logging.info("Hosts have been successfully reset: %s"
                              % reset_hosts)
 
         return reset_hosts
@@ -158,7 +154,7 @@ class DB():
         Marks the host as invalidated.
         """
         self.d[host]["validated"] = False
-    
+
     def is_validated(self, host):
         """
         Returns True/False if the host is validated/not validated.
@@ -189,10 +185,10 @@ class DB():
                 self.d[args.host_ip]["triggers"]
             except KeyError:
                 self._initialize(args.host_ip)
-            
+
             self.d[args.host_ip]["triggers"].append(args.trigger)
             logging.info("Trigger '%s' appended to host '%s' records." %
-                          (args.trigger, args.host_ip))
+                         (args.trigger, args.host_ip))
         return append
 
     @commit
@@ -201,21 +197,21 @@ class DB():
         Returns True/False if trigger has been removed/not removed.
         """
         remove = False
-        
+
         try:
             self.d[args.host_ip]["triggers"].remove(args.trigger)
             logging.info("Trigger '%s' deleted from host '%s' records." %
-                          (args.trigger, args.host_ip))
+                         (args.trigger, args.host_ip))
             remove = True
         except KeyError:
             logging.error("Host '%s' not already tracked." % args.host_ip)
         except ValueError:
             logging.error("Trigger '%s' not found for host '%s'." %
-                           (args.trigger, args.host_ip))
+                          (args.trigger, args.host_ip))
 
         if remove:
             logging.debug("Remaining triggers for host '%s': %s." %
-                           (args.host_ip, self.d[args.host_ip]["triggers"]))
+                          (args.host_ip, self.d[args.host_ip]["triggers"]))
         return remove
 
     def get_trigger(self, host):
@@ -230,25 +226,21 @@ class DB():
         return triggers
 
 
-
-# -------------------- #
-# -- PEN management -- #
-# -------------------- #
-
 class PENCommandExecException(Exception):
     pass
+
 
 class PEN():
     def _exec_cmd(self, cmd):
         """
         Executes the penctl command received.
-            - Returns False if there was an error while executing the 
+            - Returns False if there was an error while executing the
               command, the output result otherwise.
         """
         status, output = commands.getstatusoutput(cmd)
         if status != 0:
-            logging.debug("Error executing command: %s\n(%s, %s)" % 
-                           (cmd, status, output))
+            logging.debug("Error executing command: %s\n(%s, %s)" %
+                          (cmd, status, output))
             raise PENCommandExecException
         else:
             return output
@@ -265,7 +257,7 @@ class PEN():
             logging.debug("Matching IDs for IP '%s': %s." % (host, ids))
         except PENCommandExecException:
             ids = []
-        
+
         return ids
 
     def _get_next_id(self):
@@ -283,19 +275,19 @@ class PEN():
             logging.debug("Next ID available in PEN cluster: %s." % next_id)
         except PENCommandExecException:
             next_id = None
-        
+
         return next_id
 
     def add_host(self, host, validated_check=True):
         """
         Adds the given host to PEN cluster.
             - 'host'           : IP address of the host to be deleted.
-            - 'validated_check': Whether or not to consider if the host is 
+            - 'validated_check': Whether or not to consider if the host is
                                  validated/not validated..
         """
         logging.debug("Adding host '%s' in PEN cluster." % host)
         logging.debug("Using PEN control port: %s." % CONF["control_port"])
-        
+
         append = False
 
         ids = self._get_id(host)
@@ -304,51 +296,52 @@ class PEN():
                           "(id/s %s). Not adding." % (host, ids)))
         else:
             id_no = self._get_next_id()
-            if id_no == None:
-                logging.error(("Did not receive a valid ID for adding host '%s'"
-                               " to PEN cluster" % host))
+            if id_no is None:
+                logging.error("Did not receive a valid ID for adding host '%s'"
+                              " to PEN cluster" % host)
             else:
                 try:
-                    cmd = ("penctl %s:%s server %s address %s port %s max 0" 
-                            % (CONF["server"] ,CONF["control_port"], id_no, host,
-                               CONF["protocol_port"]))
+                    cmd = ("penctl %s:%s server %s address %s port %s max 0"
+                           % (CONF["server"], CONF["control_port"], id_no,
+                              host, CONF["protocol_port"]))
                     self._exec_cmd(cmd)
                     append = True
-                    logging.info("Node '%s' added to PEN cluster with ID %s" 
-                                  % (host, id_no))
+                    logging.info("Node '%s' added to PEN cluster with ID %s"
+                                 % (host, id_no))
                 except PENCommandExecException:
-                    logging.error(("Could not add host '%s' in PEN"
-                                   " cluster. Check the log for further" 
-                                   " details." % host))
+                    logging.error("Could not add host '%s' in PEN"
+                                  " cluster. Check the log for further"
+                                  " details." % host)
 
         return append
 
     def del_host(self, host):
         """
-        Deletes all the matched entries found for the given host in PEN cluster.
+        Deletes the matched entries found for the given host in PEN cluster.
             - 'host': IP address of the host to be deleted.
         """
         logging.debug("Removing host '%s' from PEN cluster." % host)
         logging.debug("Using PEN control port: %s." % CONF["control_port"])
 
         remove = False
-        
+
         ids = self._get_id(host)
         if not ids:
-            logging.info("Node '%s' does not already belong to PEN cluster. Not deleting." %
-                         host)
+            logging.info("Node '%s' does not already belong to PEN cluster. "
+                         "Not deleting." % host)
         else:
             for id_no in ids:
                 try:
-                    cmd = ("penctl %s:%s server %s address 0.0.0.0 port" 
-                           "0 max 0" % (CONF["server"], CONF["control_port"], id_no))
+                    cmd = ("penctl %s:%s server %s address 0.0.0.0 port"
+                           "0 max 0" %
+                           (CONF["server"], CONF["control_port"], id_no))
                     self._exec_cmd(cmd)
                     logging.info("Host '%s' has been removed from PEN cluster"
                                  " (id: %s)." % (host, id_no))
                     remove = True
                 except PENCommandExecException:
-                    logging.error(("Could not delete host '%s' from PEN" 
-                                   " cluster. Check the log for further" 
+                    logging.error(("Could not delete host '%s' from PEN"
+                                   " cluster. Check the log for further"
                                    " details." % host))
 
         return remove
@@ -360,10 +353,11 @@ class PEN():
         cmd = "penctl %s:%s servers" % (CONF["server"], CONF["control_port"])
         status, output = commands.getstatusoutput(cmd)
         if status != 0:
-            logging.error(("Could not list hosts enabled in PEN cluster (err_no:"
-                          " %s)." % status))
+            logging.error("Could not list hosts enabled in PEN cluster "
+                          "(err_no: %s)." % status)
         else:
-            server_lines = [ line for line in output.split('\n') if line.split()[2] != "0.0.0.0" ]
+            server_lines = [line for line in output.split('\n')
+                            if line.split()[2] != "0.0.0.0"]
             try:
                 # get columns
                 cols = server_lines[0].split()[1:]
@@ -387,11 +381,6 @@ class PEN():
                 logging.info("There are no hosts currently in PEN cluster.")
 
 
-
-# --------------------- #
-# -- PENe main class -- #
-# --------------------- #
-
 class PenE():
     def __init__(self):
         self.db = DB()
@@ -402,12 +391,12 @@ class PenE():
         Decides whether to validate or invalidate the given host.
         """
         self.db.register(args.host_ip)
-        
+
         if args.validate:
             self.db.validate(args.host_ip)
-            logging.info("Node '%s' has been validated by the admin" 
-                          % args.host_ip)
-            
+            logging.info("Node '%s' has been validated by the admin"
+                         % args.host_ip)
+
             triggers = self.db.get_trigger(args.host_ip)
             if triggers:
                 logging.info(("Host '%s' cannot be added to cluster. Active"
@@ -435,13 +424,13 @@ class PenE():
         """
         for h in self.db.reset(args):
             self.pen.add_host(h)
-   
+
     def track(self, args):
         """
         Tracks the given node if it is not already added to the DB.
         """
         self.db.register(args.host_ip)
-    
+
     def untrack(self, args):
         """
         Untracks the given node if already added to the DB.
@@ -464,8 +453,8 @@ class PenE():
             self.pen.add_host(args.host_ip)
             logging.debug("Host '%s' is validated. Appending to the cluster.")
         else:
-            logging.info(("Host '%s' is invalidated. Cannot be added to the"
-                           " cluster." % args.host_ip))
+            logging.info("Host '%s' is invalidated. Cannot be added to the"
+                         " cluster." % args.host_ip)
 
     def add_host(self, args, validated_check=True):
         """
@@ -474,11 +463,11 @@ class PenE():
         if self.db.is_validated(args.host_ip) or not validated_check:
             triggers = self.db.get_trigger(args.host_ip)
             if triggers:
-                logging.info(("Host '%s' cannot be added to cluster. Active"
-                              " triggers: %s." % (args.host_ip, triggers)))
+                logging.info("Host '%s' cannot be added to cluster. Active"
+                             " triggers: %s." % (args.host_ip, triggers))
             else:
-                logging.debug(("Host '%s' has no triggers assigned. Host can"
-                               "be added." % args.host_ip))
+                logging.debug("Host '%s' has no triggers assigned. Host can"
+                              "be added." % args.host_ip)
                 self.pen.add_host(args.host_ip)
                 self.db.register(args.host_ip)
 
@@ -488,11 +477,11 @@ class PenE():
         """
         if self.pen.del_host(args.host_ip):
             if self.db.is_validated(args.host_ip):
-                logging.info(("Host '%s' is in a valid status (within DB). Note"
-                              " that it is likely to be auto-added to PEN" 
-                              " cluster. Trigger an invalidation to delete it"
-                              " permanently." % args.host_ip))
-    
+                logging.info("Host '%s' is in a valid status (within DB). Note"
+                             " that it is likely to be auto-added to PEN"
+                             " cluster. Trigger an invalidation to delete it"
+                             " permanently." % args.host_ip)
+
     def cluster(self, args):
         """
         Cluster status.
@@ -501,22 +490,19 @@ class PenE():
 
     def show_config(self, args):
         t = prettytable.PrettyTable(["", ""])
-        for k,v in CONF.iteritems():
-            t.add_row([k,v])
+        for k, v in CONF.iteritems():
+            t.add_row([k, v])
         logging.info("CONFIGURATION snapshot:\n%s" % t)
 
-
-
-# ---------- #
-# -- MAIN -- #
-# ---------- #
 
 def set_log():
     # -- LOG -- #
     ## file
     logging.basicConfig(level=logging.DEBUG,
-                        #format='%(asctime)s %(name) %(levelname)-8s %(message)s',
-                        format="%(asctime)-12s %(levelname)-8s %(filename)s:%(lineno)d (%(funcName)s) - %(message)s",
+                        format=("%(asctime)-12s "
+                                "%(levelname)-8s "
+                                "%(filename)s:%(lineno)d "
+                                "(%(funcName)s) - %(message)s"),
                         datefmt='%m-%d %H:%M',
                         filename=CONF["log_filename"],
                         filemode='a')
@@ -616,7 +602,8 @@ parser_config_show.set_defaults(func=penE.show_config)
 #- PEN-related commands -#
 ## add node
 parser_pen_add = subparsers.add_parser("add")
-parser_pen_add.add_argument("host_ip",
+parser_pen_add.add_argument(
+    "host_ip",
     action="store",
     metavar="IPADDRESS")
 parser_pen_add.set_defaults(func=penE.add_host)
