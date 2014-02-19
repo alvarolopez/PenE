@@ -229,12 +229,20 @@ class PENCommandExecException(Exception):
 
 
 class PEN(object):
+    def __init__(self, pen_host, pen_port):
+        self.pen_host = pen_host
+        self.pen_port = pen_port
+
     def _exec_cmd(self, cmd):
         """
         Executes the penctl command received.
             - Returns False if there was an error while executing the
               command, the output result otherwise.
         """
+        cmd = "penctl %(host)s:%(port)s %(cmd)s" % {"server": self.pen_host,
+                                                    "port": self.pen_port,
+                                                    "cmd": cmd}
+
         status, output = commands.getstatusoutput(cmd)
         if status != 0:
             logging.debug("Error executing command: %s\n(%s, %s)" %
@@ -247,7 +255,7 @@ class PEN(object):
         """
         Returns all the IDs that match the given host IP.
         """
-        cmd = "penctl %s:%s servers" % (CONF["server"], CONF["control_port"])
+        cmd = "servers"
         try:
             output = self._exec_cmd(cmd).split('\n')
             ids = [line.split()[0] for line in output
@@ -262,7 +270,7 @@ class PEN(object):
         """
         Returns the next ID available in the cluster (for adding purposes).
         """
-        cmd = "penctl %s:%s servers" % (CONF["server"], CONF["control_port"])
+        cmd = "servers"
         try:
             output = self._exec_cmd(cmd).split('\n')
             next_id = None
@@ -299,9 +307,8 @@ class PEN(object):
                               " to PEN cluster" % host)
             else:
                 try:
-                    cmd = ("penctl %s:%s server %s address %s port %s max 0"
-                           % (CONF["server"], CONF["control_port"], id_no,
-                              host, CONF["protocol_port"]))
+                    cmd = ("server %s address %s port %s max 0" %
+                           (id_no, host, CONF["protocol_port"]))
                     self._exec_cmd(cmd)
                     append = True
                     logging.info("Node '%s' added to PEN cluster with ID %s"
@@ -330,9 +337,7 @@ class PEN(object):
         else:
             for id_no in ids:
                 try:
-                    cmd = ("penctl %s:%s server %s address 0.0.0.0 port"
-                           "0 max 0" %
-                           (CONF["server"], CONF["control_port"], id_no))
+                    cmd = "server %s address 0.0.0.0 port 0 max 0" % id_no
                     self._exec_cmd(cmd)
                     logging.info("Host '%s' has been removed from PEN cluster"
                                  " (id: %s)." % (host, id_no))
@@ -380,9 +385,11 @@ class PEN(object):
 
 
 class PenE(object):
-    def __init__(self):
+    def __init__(self, pen_host, pen_port):
+        self.pen_host = pen_host
+        self.pen_port = pen_port
         self.db = DB()
-        self.pen = PEN()
+        self.pen = PEN(pen_host, pen_port)
 
     def validate(self, args):
         """
