@@ -2,7 +2,6 @@
 
 import argparse
 import commands
-import json
 import logging
 import prettytable
 import re
