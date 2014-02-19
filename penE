@@ -115,7 +115,6 @@ class DB():
                     self._initialize(args.host_ip)
                     reset_hosts.append(h)
                     logging.debug("Reseting DB data for host '%s'" % h)
-                reset = True
                 logging.info("Hosts have been successfully reset: %s"
                              % reset_hosts)
 
